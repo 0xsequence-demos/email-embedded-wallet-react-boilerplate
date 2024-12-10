@@ -18,3 +18,5 @@ pnpm install && pnpm dev
 The app will start on `localhost:4444`
 
 To provide your own keys from [Sequence Builder](https://sequence.build/), simply edit the `.env` file accordingly.
+
+TEST
