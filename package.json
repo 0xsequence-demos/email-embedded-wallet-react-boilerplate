@@ -11,9 +11,19 @@
     "postinstall": "(cp -n .env.example .env) || echo already exists"
   },
   "dependencies": {
-    "@0xsequence/waas": "1.10.0",
+    "0xsequence": "^2.3.25",
+    "@0xsequence/api": "^2.3.25",
+    "@0xsequence/connect": "^5.3.14",
+    "@0xsequence/hooks": "^5.3.14",
+    "@0xsequence/waas": "2.3.25",
+    "@tanstack/react-query": "^5.85.5",
+    "ethers": "^6.15.0",
+    "jose": "^6.1.0",
+    "playfab-sdk": "^2.180.250815",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "viem": "^2.36.0",
+    "wagmi": "^2.16.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
