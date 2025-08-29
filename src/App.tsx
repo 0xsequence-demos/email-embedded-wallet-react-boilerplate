@@ -121,6 +121,7 @@ function App() {
       const emailResponse = await sequence.signIn({ email }, "Email Waas Auth");
       console.log(emailResponse);
       setWalletAddress(emailResponse.wallet);
+      setParentWalletAddress(emailResponse.wallet);
     }
   };
 
@@ -224,6 +225,7 @@ function App() {
   };
   const handleOnParentWalletDisconnectClick = async () => {
     setWalletAddress(null);
+    setParentWalletAddress("");
     setAwaitingEmailCodeInput(false);
     setEmail(null);
     setWalletToUnlink(undefined);
@@ -420,7 +422,12 @@ function App() {
     <>
       <h1>Email Embedded Wallet Auth</h1>
       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-        <PlayFabLogin setWalletAddress={setWalletAddress} />
+        <PlayFabLogin
+          setWalletAddress={(address) => {
+            setWalletAddress(address);
+            setParentWalletAddress(address);
+          }}
+        />
 
         {/* email / code input */}
         {!walletAddress && (
