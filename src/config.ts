@@ -6,5 +6,6 @@ export const waasConfigKey = import.meta.env.VITE_WAAS_CONFIG_KEY
 export const sequence = new SequenceWaaS({
   projectAccessKey: projectAccessKey,
   waasConfigKey: waasConfigKey,
-  network: 'base-sepolia'
+  // Network doesn't matter much for auth + session export. We'll use Polygon for the first onchain action.
+  network: 'polygon'
 })
