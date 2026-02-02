@@ -6,11 +6,24 @@ import sealedbox from 'tweetnacl-sealedbox-js'
 
 async function idbGet(dbName: string, storeName: string, key: string): Promise<any | null> {
   return new Promise((resolve, reject) => {
+    // NOTE: if the DB exists but the store doesn't, attempting a transaction throws NotFoundError.
     const req = indexedDB.open(dbName)
+
     req.onerror = () => reject(req.error)
+
+    req.onupgradeneeded = () => {
+      // If this DB is being created for the first time and doesn't have the expected store yet,
+      // we can't read anything. Don't create stores here (we want the WaaS SDK to own schema).
+      resolve(null)
+    }
+
     req.onsuccess = () => {
       const db = req.result
       try {
+        if (!db.objectStoreNames.contains(storeName)) {
+          resolve(null)
+          return
+        }
         const tx = db.transaction(storeName, 'readonly')
         const store = tx.objectStore(storeName)
         const getReq = store.get(key)
@@ -19,10 +32,6 @@ async function idbGet(dbName: string, storeName: string, key: string): Promise<a
       } catch (e) {
         reject(e)
       }
-    }
-    req.onupgradeneeded = () => {
-      // DB exists but store may not yet; resolve null
-      resolve(null)
     }
   })
 }
