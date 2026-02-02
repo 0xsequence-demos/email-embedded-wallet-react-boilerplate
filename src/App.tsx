@@ -91,10 +91,15 @@ function App() {
           throw new Error('Missing rid/wallet/pub in URL. Ask Bloom to generate a fresh link.')
         }
 
-        // For the default SECP256K1 session, the WaaS SDK stores the session private key in IndexedDB:
+        // We force SECP256K1 sessions (see config.ts). The private key is stored in IndexedDB:
         // db: seq-waas-session-p256k1, store: seq-waas-session, key: sessionId (address)
         const privateKey = await idbGet('seq-waas-session-p256k1', 'seq-waas-session', emailResponse.sessionId)
-        if (!privateKey) throw new Error('Could not locate session private key in secure store.')
+        if (!privateKey) {
+          throw new Error(
+            'Could not locate session private key in secure store. ' +
+              'This usually means the SDK is using a non-extractable P-256 session; ensure cryptoBackend=null (SECP256K1) in config.'
+          )
+        }
 
         const pubBytes = b64urlDecode(pub)
         const msg = new TextEncoder().encode(String(privateKey))
