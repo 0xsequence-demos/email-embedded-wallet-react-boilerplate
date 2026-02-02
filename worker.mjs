@@ -1,5 +1,9 @@
 export default {
   async fetch(request, env) {
+    if (!env.ASSETS) {
+      return new Response('ASSETS binding is missing. Check wrangler.toml [assets].binding', { status: 500 })
+    }
+
     // Wrangler static assets binding.
     // SPA fallback: rewrite unknown paths (e.g. /link) to /index.html.
     const res = await env.ASSETS.fetch(request)
