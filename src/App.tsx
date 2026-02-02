@@ -68,11 +68,57 @@ type BalanceSummary = {
   balances?: Array<{ contractType: string; contractAddress: string; balance: string }>
 }
 
+async function deleteIndexedDb(dbName: string): Promise<void> {
+  await new Promise<void>(resolve => {
+    const req = indexedDB.deleteDatabase(dbName)
+    req.onsuccess = () => resolve()
+    req.onerror = () => resolve()
+    req.onblocked = () => resolve()
+  })
+}
+
+async function resetLocalSessionStateForNewRid(rid: string): Promise<boolean> {
+  if (!rid) return false
+
+  const key = 'moltbot.lastRid'
+  const lastRid = window.localStorage.getItem(key)
+  if (lastRid === rid) return false
+
+  // Mark this RID so we only reset once per link.
+  window.localStorage.setItem(key, rid)
+
+  // Clear WaaS local store keys
+  const waasKeys = [
+    '@0xsequence.waas.status',
+    '@0xsequence.waas.session_id',
+    '@0xsequence.waas.wallet',
+    '@0xsequence.waas.auth.deviceName'
+  ]
+  for (const k of waasKeys) window.localStorage.removeItem(k)
+
+  // Clear secure store DBs used by WaaS sessions
+  await deleteIndexedDb('seq-waas-session-p256k1')
+  await deleteIndexedDb('seq-waas-session-p256r1')
+
+  return true
+}
+
 function App() {
   const params = useMemo(() => new URLSearchParams(window.location.search), [])
   const rid = params.get('rid') || ''
   const walletName = params.get('wallet') || ''
   const pub = params.get('pub') || ''
+
+  // If you open a fresh /link?rid=... while an older session exists, WaaS can treat
+  // the new sign-in as conflicting. Reset local state once per new RID.
+  useEffect(() => {
+    ;(async () => {
+      const didReset = await resetLocalSessionStateForNewRid(rid)
+      if (didReset) {
+        window.location.reload()
+      }
+    })()
+  }, [rid])
 
   const [awaitingEmailCodeInput, setAwaitingEmailCodeInput] = useState(false)
   const [walletAddress, setWalletAddress] = useState<string>('')
