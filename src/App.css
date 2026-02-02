@@ -1,3 +1,5 @@
+* { box-sizing: border-box; }
+
 :root {
   --poly: #8247e5;
   --bg: #0b0b12;
