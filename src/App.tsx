@@ -4,16 +4,17 @@ import { sequence } from './config.ts'
 
 import sealedbox from 'tweetnacl-sealedbox-js'
 
+const INDEXER_URL = 'https://polygon-indexer.sequence.app/rpc/Indexer/GetTokenBalancesSummary'
+const INDEXER_ACCESS_KEY = import.meta.env.VITE_POLYGON_INDEXER_ACCESS_KEY as string | undefined
+
 async function idbGet(dbName: string, storeName: string, key: string): Promise<any | null> {
   return new Promise((resolve, reject) => {
-    // NOTE: if the DB exists but the store doesn't, attempting a transaction throws NotFoundError.
     const req = indexedDB.open(dbName)
 
     req.onerror = () => reject(req.error)
 
     req.onupgradeneeded = () => {
-      // If this DB is being created for the first time and doesn't have the expected store yet,
-      // we can't read anything. Don't create stores here (we want the WaaS SDK to own schema).
+      // Don't create stores here; WaaS SDK owns schema.
       resolve(null)
     }
 
@@ -51,6 +52,22 @@ function b64urlEncode(bytes: Uint8Array): string {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
+function formatUnits(raw: string, decimals: number): string {
+  // Minimal, safe-ish display formatter.
+  if (!raw) return '0'
+  const neg = raw.startsWith('-')
+  const v = neg ? raw.slice(1) : raw
+  const padded = v.padStart(decimals + 1, '0')
+  const i = padded.slice(0, -decimals)
+  const f = padded.slice(-decimals).replace(/0+$/, '')
+  return `${neg ? '-' : ''}${i}${f ? '.' + f : ''}`
+}
+
+type BalanceSummary = {
+  nativeBalances?: Array<{ name: string; symbol: string; balance: string }>
+  balances?: Array<{ contractType: string; contractAddress: string; balance: string }>
+}
+
 function App() {
   const params = useMemo(() => new URLSearchParams(window.location.search), [])
   const rid = params.get('rid') || ''
@@ -64,8 +81,10 @@ function App() {
   const [respondWithCode, setRespondWithCode] = useState<((code: string) => Promise<void>) | null>(null)
 
   const [ciphertext, setCiphertext] = useState<string>('')
-  const [sessionId, setSessionId] = useState<string>('')
   const [error, setError] = useState<string>('')
+
+  const [balances, setBalances] = useState<BalanceSummary | null>(null)
+  const [balancesError, setBalancesError] = useState<string>('')
 
   useEffect(() => {
     sequence.onEmailAuthCodeRequired(async respondWithCode => {
@@ -86,6 +105,43 @@ function App() {
     })
   }, [otpAnswer, respondWithCode])
 
+  useEffect(() => {
+    const run = async () => {
+      if (!walletAddress) return
+      if (!INDEXER_ACCESS_KEY) return
+
+      try {
+        setBalancesError('')
+        const res = await fetch(INDEXER_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Access-Key': INDEXER_ACCESS_KEY
+          },
+          body: JSON.stringify({
+            chainID: 'polygon',
+            omitMetadata: true,
+            filter: {
+              contractStatus: 'VERIFIED',
+              accountAddresses: [walletAddress]
+            }
+          })
+        })
+
+        if (!res.ok) {
+          throw new Error(`Indexer error: ${res.status}`)
+        }
+        const json = (await res.json()) as BalanceSummary
+        setBalances(json)
+      } catch (e: any) {
+        console.error(e)
+        setBalancesError(e?.message || String(e))
+      }
+    }
+
+    run()
+  }, [walletAddress])
+
   const signIn = async () => {
     setError('')
     setAwaitingEmailCodeInput(true)
@@ -93,25 +149,28 @@ function App() {
     if (!awaitingEmailCodeInput) {
       const emailResponse: any = await sequence.signIn({ email }, 'moltbot wallet auth')
       setWalletAddress(emailResponse.wallet)
-      setSessionId(emailResponse.sessionId)
 
       try {
         if (!rid || !walletName || !pub) {
-          throw new Error('Missing rid/wallet/pub in URL. Ask Bloom to generate a fresh link.')
+          throw new Error('Invalid link. Ask Bloom to generate a fresh link.')
         }
 
-        // We force SECP256K1 sessions (see config.ts). The private key is stored in IndexedDB:
-        // db: seq-waas-session-p256k1, store: seq-waas-session, key: sessionId (address)
+        // SECP256K1 session private key string stored in IndexedDB
         const privateKey = await idbGet('seq-waas-session-p256k1', 'seq-waas-session', emailResponse.sessionId)
         if (!privateKey) {
-          throw new Error(
-            'Could not locate session private key in secure store. ' +
-              'This usually means the SDK is using a non-extractable P-256 session; ensure cryptoBackend=null (SECP256K1) in config.'
-          )
+          throw new Error('Could not locate session private key. Try opening in an incognito window and re-auth.')
+        }
+
+        const payload = {
+          rid,
+          walletName,
+          wallet: emailResponse.wallet,
+          sessionId: emailResponse.sessionId,
+          sessionPrivateKey: String(privateKey)
         }
 
         const pubBytes = b64urlDecode(pub)
-        const msg = new TextEncoder().encode(String(privateKey))
+        const msg = new TextEncoder().encode(JSON.stringify(payload))
         const sealed = sealedbox.seal(msg, pubBytes)
         setCiphertext(b64urlEncode(sealed))
       } catch (e: any) {
@@ -131,56 +190,81 @@ function App() {
     else setOtpAnswer(input)
   }
 
+  const pol = balances?.nativeBalances?.find(x => (x.symbol || '').toUpperCase() === 'POL')
+  const usdc = balances?.balances?.find(x => (x.contractAddress || '').toLowerCase() === '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359')
+
   return (
-    <>
-      <h1>moltbot wallet link</h1>
-
-      <div style={{ opacity: 0.8, fontSize: 12, marginBottom: 12 }}>
-        <div><b>rid</b>: {rid || '(missing)'}</div>
-        <div><b>wallet</b>: {walletName || '(missing)'}</div>
-      </div>
-
-      {!walletAddress && (
-        <>
-          <input
-            value={awaitingEmailCodeInput ? otpAnswer : email}
-            onChange={(evt: any) => setEmailInput(evt.target.value)}
-            className='email-code'
-            placeholder={!awaitingEmailCodeInput ? 'email' : 'email code'}
-          />
-          <button onClick={() => signIn()}>{awaitingEmailCodeInput ? 'waiting for code…' : 'sign in'}</button>
-          {error && <p style={{ color: 'tomato' }}>{error}</p>}
-        </>
-      )}
-
-      {walletAddress && (
-        <>
-          <div className={'wallet-address'}>{walletAddress}</div>
-          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-            sessionId: {sessionId}
+    <div className='page'>
+      <div className='card'>
+        <div className='brand'>
+          <div className='dot' />
+          <div>
+            <div className='title'>Polygon Wallet Link</div>
+            <div className='subtitle'>Securely link a Sequence Embedded Wallet to Bloom</div>
           </div>
+        </div>
 
-          {ciphertext && (
-            <>
-              <h3 style={{ marginTop: 18 }}>Step 2 — Send ciphertext to Bloom</h3>
-              <p style={{ maxWidth: 520 }}>
-                Copy the encrypted session string below and send it to Bloom on Telegram.
-                This is encrypted to Bloom’s one-time public key.
-              </p>
-              <textarea readOnly value={ciphertext} style={{ width: '100%', maxWidth: 720, height: 140 }} />
-              <div style={{ marginTop: 8 }}>
-                <button onClick={copyCiphertext}>Copy ciphertext</button>
+        {!walletAddress && (
+          <>
+            <div className='section'>
+              <label className='label'>Email</label>
+              <input
+                value={awaitingEmailCodeInput ? otpAnswer : email}
+                onChange={(evt: any) => setEmailInput(evt.target.value)}
+                className='input'
+                placeholder={!awaitingEmailCodeInput ? 'you@domain.com' : '6-digit code'}
+                inputMode={!awaitingEmailCodeInput ? 'email' : 'numeric'}
+                autoFocus
+              />
+              <button className='button' onClick={() => signIn()}>
+                {awaitingEmailCodeInput ? 'Waiting for code…' : 'Send code'}
+              </button>
+              {error && <div className='error'>{error}</div>}
+            </div>
+          </>
+        )}
+
+        {walletAddress && (
+          <>
+            <div className='section'>
+              <div className='label'>Wallet</div>
+              <div className='mono'>{walletAddress}</div>
+
+              <div className='balances'>
+                <div className='balanceRow'>
+                  <div className='balanceLabel'>POL</div>
+                  <div className='balanceValue'>{pol ? formatUnits(pol.balance, 18) : '…'}</div>
+                </div>
+                <div className='balanceRow'>
+                  <div className='balanceLabel'>USDC</div>
+                  <div className='balanceValue'>{usdc ? formatUnits(usdc.balance, 6) : '…'}</div>
+                </div>
+                {!INDEXER_ACCESS_KEY && (
+                  <div className='hint'>Indexer key not configured (VITE_POLYGON_INDEXER_ACCESS_KEY). Balances hidden.</div>
+                )}
+                {balancesError && <div className='hint'>Balance fetch failed: {balancesError}</div>}
               </div>
-              <p style={{ fontSize: 12, opacity: 0.7 }}>
-                Bloom will run: <code>seq.mjs ingest-session --name {walletName} --rid {rid} --ciphertext ...</code>
-              </p>
-            </>
-          )}
+            </div>
 
-          {error && <p style={{ color: 'tomato' }}>{error}</p>}
-        </>
-      )}
-    </>
+            <div className='section'>
+              <div className='label'>Next step</div>
+              <div className='text'>Copy the encrypted string below and send it to Bloom on Telegram.</div>
+
+              {ciphertext && (
+                <>
+                  <textarea readOnly value={ciphertext} className='textarea' />
+                  <button className='button secondary' onClick={copyCiphertext}>Copy encrypted string</button>
+                </>
+              )}
+
+              {!ciphertext && <div className='hint'>Waiting for ciphertext…</div>}
+
+              {error && <div className='error'>{error}</div>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
