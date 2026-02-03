@@ -1,11 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
-import { sequence } from './config.ts'
+import { projectAccessKey, waasConfigKey } from './config.ts'
 
+import { SequenceWaaS } from '@0xsequence/waas'
 import sealedbox from 'tweetnacl-sealedbox-js'
 
-const INDEXER_URL = 'https://polygon-indexer.sequence.app/rpc/Indexer/GetTokenBalancesSummary'
 const INDEXER_ACCESS_KEY = import.meta.env.VITE_POLYGON_INDEXER_ACCESS_KEY as string | undefined
+
+function indexerUrlForChain(chain: string): string {
+  // Allow falling back to polygon if we don't know the chain.
+  // If needed, make this a single env var later.
+  switch ((chain || '').toLowerCase()) {
+    case 'polygon':
+      return 'https://polygon-indexer.sequence.app/rpc/Indexer/GetTokenBalancesSummary'
+    case 'base':
+      return 'https://base-indexer.sequence.app/rpc/Indexer/GetTokenBalancesSummary'
+    case 'arbitrum':
+    case 'arbitrum-one':
+    case 'arbitrumone':
+      return 'https://arbitrum-indexer.sequence.app/rpc/Indexer/GetTokenBalancesSummary'
+    default:
+      return 'https://polygon-indexer.sequence.app/rpc/Indexer/GetTokenBalancesSummary'
+  }
+}
 
 async function idbGet(dbName: string, storeName: string, key: string): Promise<any | null> {
   return new Promise((resolve, reject) => {
@@ -118,6 +135,7 @@ function App() {
   const rid = params.get('rid') || ''
   const walletName = params.get('wallet') || ''
   const pub = params.get('pub') || ''
+  const chain = (params.get('chain') || 'polygon').toLowerCase()
 
   // If you open a fresh /link?rid=... while an older session exists, WaaS can treat
   // the new sign-in as conflicting. Reset local state once per new RID.
@@ -142,11 +160,25 @@ function App() {
   const [balances, setBalances] = useState<BalanceSummary | null>(null)
   const [balancesError, setBalancesError] = useState<string>('')
 
+  const sequence = useMemo(() => {
+    // Lazy-create WaaS client based on link chain.
+    // IMPORTANT: We pass `cryptoBackend = null` to force SECP256K1 sessions (exportable).
+    return new SequenceWaaS(
+      {
+        projectAccessKey,
+        waasConfigKey,
+        network: chain as any
+      },
+      undefined,
+      null
+    )
+  }, [chain])
+
   useEffect(() => {
     sequence.onEmailAuthCodeRequired(async respondWithCode => {
       setRespondWithCode(() => respondWithCode)
     })
-  }, [])
+  }, [sequence])
 
   useEffect(() => {
     setTimeout(async () => {
@@ -168,7 +200,7 @@ function App() {
 
       try {
         setBalancesError('')
-        const res = await fetch(INDEXER_URL, {
+        const res = await fetch(indexerUrlForChain(chain), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
