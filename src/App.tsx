@@ -65,7 +65,17 @@ function formatUnits(raw: string, decimals: number): string {
 
 type BalanceSummary = {
   nativeBalances?: Array<{ name: string; symbol: string; balance: string }>
-  balances?: Array<{ contractType: string; contractAddress: string; balance: string }>
+  balances?: Array<{
+    contractType: string
+    contractAddress: string
+    balance: string
+    contractInfo?: {
+      name?: string
+      symbol?: string
+      decimals?: number
+      logoURI?: string
+    }
+  }>
 }
 
 async function deleteIndexedDb(dbName: string): Promise<void> {
@@ -166,7 +176,7 @@ function App() {
           },
           body: JSON.stringify({
             chainID: 'polygon',
-            omitMetadata: true,
+            omitMetadata: false,
             filter: {
               contractStatus: 'VERIFIED',
               accountAddresses: [walletAddress]
@@ -236,8 +246,25 @@ function App() {
     else setOtpAnswer(input)
   }
 
-  const pol = balances?.nativeBalances?.find(x => (x.symbol || '').toUpperCase() === 'POL')
-  const usdc = balances?.balances?.find(x => (x.contractAddress || '').toLowerCase() === '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359')
+  const nativeRows = (balances?.nativeBalances || []).map(b => ({
+    key: `native:${b.symbol}`,
+    symbol: b.symbol || b.name || 'NATIVE',
+    name: b.name || b.symbol || 'Native',
+    decimals: 18,
+    balance: b.balance,
+    logoURI: undefined as string | undefined
+  }))
+
+  const erc20Rows = (balances?.balances || []).map(b => ({
+    key: `erc20:${b.contractAddress}`,
+    symbol: b.contractInfo?.symbol || 'ERC20',
+    name: b.contractInfo?.name || b.contractInfo?.symbol || b.contractAddress,
+    decimals: b.contractInfo?.decimals ?? 0,
+    balance: b.balance,
+    logoURI: b.contractInfo?.logoURI
+  }))
+
+  const allRows = [...nativeRows, ...erc20Rows]
 
   return (
     <div className='page'>
@@ -277,18 +304,26 @@ function App() {
               <div className='mono'>{walletAddress}</div>
 
               <div className='balances'>
-                <div className='balanceRow'>
-                  <div className='balanceLabel'>POL</div>
-                  <div className='balanceValue'>{pol ? formatUnits(pol.balance, 18) : '…'}</div>
-                </div>
-                <div className='balanceRow'>
-                  <div className='balanceLabel'>USDC</div>
-                  <div className='balanceValue'>{usdc ? formatUnits(usdc.balance, 6) : '…'}</div>
-                </div>
                 {!INDEXER_ACCESS_KEY && (
                   <div className='hint'>Indexer key not configured (VITE_POLYGON_INDEXER_ACCESS_KEY). Balances hidden.</div>
                 )}
                 {balancesError && <div className='hint'>Balance fetch failed: {balancesError}</div>}
+
+                {INDEXER_ACCESS_KEY && !balancesError && allRows.length === 0 && (
+                  <div className='hint'>No balances found.</div>
+                )}
+
+                {allRows.map(row => (
+                  <div className='balanceRow' key={row.key}>
+                    <div className='balanceLabel'>
+                      {row.logoURI ? (
+                        <img src={row.logoURI} alt='' style={{ width: 16, height: 16, borderRadius: 999, marginRight: 8 }} />
+                      ) : null}
+                      <span>{row.symbol}</span>
+                    </div>
+                    <div className='balanceValue'>{formatUnits(row.balance, row.decimals)}</div>
+                  </div>
+                ))}
               </div>
             </div>
 
